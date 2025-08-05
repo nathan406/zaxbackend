@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: zax-backend
+    env: python
+    buildCommand: "pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate"
+    startCommand: "gunicorn zax_backend.wsgi:application"
+    plan: free
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: DEBUG
+        value: False
+      - key: SECRET_KEY
+        generateValue: true
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: zax-database
+          property: connectionString
+      - key: ALLOWED_HOSTS
+        value: "zax-backend.onrender.com"
+      - key: CORS_ALLOWED_ORIGINS
+        value: "https://your-netlify-app.netlify.app"
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "60"
+
+databases:
+  - name: zax-database
+    plan: free
