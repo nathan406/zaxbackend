@@ -162,10 +162,16 @@ REST_FRAMEWORK = {
 }
 
 # CORS settings
-CORS_ALLOWED_ORIGINS = config(
+cors_origins_str = config(
     'CORS_ALLOWED_ORIGINS', 
     default='http://localhost:5173,http://127.0.0.1:5173,https://zrabot.netlify.app'
-).split(',')
+)
+
+# Handle both single origin and comma-separated origins
+if ',' in cors_origins_str:
+    CORS_ALLOWED_ORIGINS = [origin.strip() for origin in cors_origins_str.split(',')]
+else:
+    CORS_ALLOWED_ORIGINS = [cors_origins_str.strip()]
 
 CORS_ALLOW_CREDENTIALS = True
 

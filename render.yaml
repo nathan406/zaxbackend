@@ -21,7 +21,7 @@ services:
       - key: ALLOWED_HOSTS
         value: "zax-backend.onrender.com"
       - key: CORS_ALLOWED_ORIGINS
-        value: "https://your-netlify-app.netlify.app"
+        value: "https://zrabot.netlify.app"
       - key: RATE_LIMIT_PER_MINUTE
         value: "60"
 
