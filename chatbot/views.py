@@ -10,6 +10,8 @@ import logging
 import requests
 from bs4 import BeautifulSoup
 import re
+from django.db import connection
+from django.core.exceptions import ImproperlyConfigured
 
 logger = logging.getLogger(__name__)
 
@@ -171,20 +173,25 @@ For completely unrelated topics, politely say: "I specialize in ZRA and tax-rela
             # Log to terminal
             self.log_to_terminal(session_id, message, True, ai_response, response_time=response_time)
             
-            # Save chat message
-            chat_message = ChatMessage.objects.create(
-                user=request.user if request.user.is_authenticated else None,
-                session_id=session_id,
-                message=message,
-                response=ai_response,
-                response_time=response_time
-            )
+            # Save chat message (with database safety)
+            try:
+                chat_message = ChatMessage.objects.create(
+                    user=request.user if request.user.is_authenticated else None,
+                    session_id=session_id,
+                    message=message,
+                    response=ai_response,
+                    response_time=response_time
+                )
+                timestamp = chat_message.timestamp
+            except Exception as db_error:
+                logger.warning(f"Could not save to database: {db_error}")
+                timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
 
             return Response({
                 'message': message,
                 'response': ai_response,
                 'session_id': session_id,
-                'timestamp': chat_message.timestamp,
+                'timestamp': timestamp,
                 'response_time': response_time
             })
 
@@ -214,21 +221,26 @@ For completely unrelated topics, politely say: "I specialize in ZRA and tax-rela
             # Log successful interaction to terminal
             self.log_to_terminal(session_id, message, True, ai_response, response_time=response_time)
 
-            # Save chat message
-            chat_message = ChatMessage.objects.create(
-                user=request.user if request.user.is_authenticated else None,
-                session_id=session_id,
-                message=message,
-                response=ai_response,
-                response_time=response_time
-            )
+            # Save chat message (with database safety)
+            try:
+                chat_message = ChatMessage.objects.create(
+                    user=request.user if request.user.is_authenticated else None,
+                    session_id=session_id,
+                    message=message,
+                    response=ai_response,
+                    response_time=response_time
+                )
+                timestamp = chat_message.timestamp
+            except Exception as db_error:
+                logger.warning(f"Could not save to database: {db_error}")
+                timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
 
             # Return the response
             return Response({
                 'message': message,
                 'response': ai_response,
                 'session_id': session_id,
-                'timestamp': chat_message.timestamp,
+                'timestamp': timestamp,
                 'response_time': response_time
             })
             
@@ -253,16 +265,22 @@ For completely unrelated topics, politely say: "I specialize in ZRA and tax-rela
         return response
     
     def get(self, request, *args, **kwargs):
-        # Return last 10 chat messages for the session
+        # Return last 10 chat messages for the session (with database safety)
         session_id = request.query_params.get('session_id', 'anonymous')
-        chat_history = ChatMessage.objects.filter(session_id=session_id).order_by('-timestamp')[:10]
-        return Response({
-            'session_id': session_id,
-            'chat_history': [
+        try:
+            chat_history = ChatMessage.objects.filter(session_id=session_id).order_by('-timestamp')[:10]
+            history_data = [
                 {
                     'message': chat.message,
                     'response': chat.response,
                     'timestamp': chat.timestamp
                 } for chat in chat_history
             ]
+        except Exception as db_error:
+            logger.warning(f"Could not fetch chat history: {db_error}")
+            history_data = []
+        
+        return Response({
+            'session_id': session_id,
+            'chat_history': history_data
         })

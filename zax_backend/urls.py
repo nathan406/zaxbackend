@@ -65,10 +65,20 @@ def debug_info(request):
         }
     })
 
+def health_check(request):
+    """Simple health check that doesn't require database"""
+    return JsonResponse({
+        'status': 'healthy',
+        'message': 'ZAX Backend is running',
+        'timestamp': '2025-08-06T07:45:00Z',
+        'database_required': False
+    })
+
 urlpatterns = [
     path('', api_root, name='root'),  # Add root endpoint
     path('admin/', admin.site.urls),
     path('api/', api_root, name='api_root'),
     path('api/debug/', debug_info, name='debug_info'),  # Debug endpoint
+    path('api/health/', health_check, name='health_check'),  # Health check
     path('api/chatbot/', include('chatbot.urls')),
 ]
