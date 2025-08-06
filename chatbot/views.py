@@ -244,6 +244,14 @@ For completely unrelated topics, politely say: "I specialize in ZRA and tax-rela
                 'details': error_message if settings.DEBUG else None
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    def options(self, request, *args, **kwargs):
+        """Handle CORS preflight requests"""
+        response = Response()
+        response['Access-Control-Allow-Origin'] = 'https://zrabot.netlify.app'
+        response['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+        response['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+        return response
+    
     def get(self, request, *args, **kwargs):
         # Return last 10 chat messages for the session
         session_id = request.query_params.get('session_id', 'anonymous')
