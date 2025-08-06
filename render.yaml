@@ -19,9 +19,9 @@ services:
           name: zax-database
           property: connectionString
       - key: ALLOWED_HOSTS
-        value: "zax-backend.onrender.com"
+        value: "zaxbackend.onrender.com"
       - key: CORS_ALLOWED_ORIGINS
-        value: "https://zrabot.netlify.app"
+        value: "https://zrabot.netlify.app,http://localhost:5173,http://127.0.0.1:5173"
       - key: RATE_LIMIT_PER_MINUTE
         value: "60"
 
