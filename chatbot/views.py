@@ -166,8 +166,21 @@ For completely unrelated topics, politely say: "I specialize in ZRA and tax-rela
             return Response({'error': 'Message content is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
         # Check if it's a greeting and handle it specially
+        # Only show full greeting for new/first-time sessions
         if self.is_greeting(message):
-            ai_response = self.get_greeting_response()
+            # Check if this is likely a new session by checking recent messages
+            try:
+                recent_messages = ChatMessage.objects.filter(session_id=session_id).order_by('-timestamp')[:1]
+                is_first_message = len(recent_messages) == 0
+            except Exception:
+                is_first_message = True  # If DB query fails, assume it's first message
+                
+            if is_first_message:
+                ai_response = self.get_greeting_response()
+            else:
+                # For repeated greetings in ongoing conversations, give a brief friendly response
+                ai_response = "Hello again! How can I assist you with your ZRA matters today? 😊"
+            
             response_time = 0.1  # Fast response for greetings
             
             # Log to terminal
@@ -206,7 +219,7 @@ For completely unrelated topics, politely say: "I specialize in ZRA and tax-rela
             response = self.client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
-                    {"role": "system", "content": "You are ZAX, a helpful AI assistant for the Zambia Revenue Authority (ZRA). Be concise, professional, and informative. Keep responses under 150 words."},
+                    {"role": "system", "content": "You are ZAX, a helpful AI assistant for the Zambia Revenue Authority (ZRA). Be concise, professional, and informative. Keep responses under 150 words. Do not use generic phrases like 'Next Steps:' unless you actually provide specific next steps. Make sure any suggested follow-up actions are genuinely relevant to the user's query. Avoid repeating greeting phrases like 'Hello!' in your responses if the conversation is already ongoing. Never use 'their' instead say 'our' when referring to ZRA services."},
                     {"role": "user", "content": context_prompt}
                 ],
                 max_tokens=200,  # Reduced for faster responses
@@ -235,13 +248,17 @@ For completely unrelated topics, politely say: "I specialize in ZRA and tax-rela
                 logger.warning(f"Could not save to database: {db_error}")
                 timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
 
+            # Generate dynamic follow-up suggestions based on response content
+            follow_up_suggestions = self.generate_follow_up_suggestions(ai_response)
+            
             # Return the response
             return Response({
                 'message': message,
                 'response': ai_response,
                 'session_id': session_id,
                 'timestamp': timestamp,
-                'response_time': response_time
+                'response_time': response_time,
+                'follow_up_suggestions': follow_up_suggestions
             })
             
         except Exception as e:
@@ -284,3 +301,62 @@ For completely unrelated topics, politely say: "I specialize in ZRA and tax-rela
             'session_id': session_id,
             'chat_history': history_data
         })
+    
+    def generate_follow_up_suggestions(self, response_text):
+        """Generate dynamic follow-up suggestions based on response content"""
+        response_lower = response_text.lower()
+        suggestions = []
+        
+        # Registration-related suggestions (more specific match)
+        if any(term in response_lower for term in ['register', 'registration', 'tpin', 'business']):
+            if not any(term in response_lower for term in ['what is', 'what\'s', 'define', 'meaning of']):
+                # More specific to the registration context
+                if 'who' in response_lower or 'individual' in response_lower or 'entity' in response_lower:
+                    suggestions.extend([
+                        {"question": "Legal age for registration", "action": "registration-age"},
+                        {"question": "Required documents", "action": "required-docs"}
+                    ])
+                else:
+                    suggestions.extend([
+                        {"question": "How to register?", "action": "registration-process"},
+                        {"question": "Required documents", "action": "required-docs"}
+                    ])
+        
+        # Tax-related suggestions (avoid if it's just explaining what something is)
+        if any(term in response_lower for term in ['tax', 'vat', 'paye', 'income tax', 'corporate tax']):
+            # Don't suggest follow-ups if the response is just explaining what something is
+            if not any(term in response_lower for term in ['what is', 'what\'s', 'define', 'meaning of']):
+                if 'vat' in response_lower and 'registration' in response_lower:
+                    suggestions.extend([
+                        {"question": "How to register for VAT?", "action": "vat-registration"},
+                        {"question": "VAT filing requirements", "action": "vat-filing"}
+                    ])
+                else:
+                    suggestions.extend([
+                        {"question": "Tax payment methods", "action": "payment-methods"},
+                        {"question": "Tax filing deadlines", "action": "tax-deadlines"}
+                    ])
+        
+        # Contact/service-related suggestions
+        if any(term in response_lower for term in ['contact', 'reach', 'office', 'location', 'call']):
+            suggestions.extend([
+                {"question": "ZRA office locations", "action": "office-locations"},
+                {"question": "Contact ZRA", "action": "contact-info"}
+            ])
+        
+        # Payment-related suggestions (only if clearly related to payment)
+        if any(term in response_lower for term in ['pay', 'payment', 'fee', 'amount due']):
+            suggestions.extend([
+                {"question": "Payment methods", "action": "payment-options"},
+                {"question": "Online payment", "action": "online-payment"}
+            ])
+        
+        # Remove duplicates and return top 2 suggestions
+        seen_questions = set()
+        unique_suggestions = []
+        for suggestion in suggestions:
+            if suggestion["question"] not in seen_questions:
+                unique_suggestions.append(suggestion)
+                seen_questions.add(suggestion["question"])
+        
+        return unique_suggestions[:2]
