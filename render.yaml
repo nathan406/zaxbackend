@@ -15,16 +15,10 @@ services:
       - key: OPENAI_API_KEY
         sync: false
       - key: DATABASE_URL
-        fromDatabase:
-          name: zax-database
-          property: connectionString
+        value: postgresql://postgres.imqkngwpgvufvrdwalhx:e5k666fDk29aCEEu@aws-1-us-east-1.pooler.supabase.com:6543/postgres
       - key: ALLOWED_HOSTS
         value: "zaxbackend.onrender.com,zax-backend.onrender.com,.onrender.com"
       - key: CORS_ALLOWED_ORIGINS
         value: "https://zrabot.netlify.app,http://localhost:5173,http://127.0.0.1:5173"
       - key: RATE_LIMIT_PER_MINUTE
         value: "60"
-
-databases:
-  - name: zax-database
-    plan: free

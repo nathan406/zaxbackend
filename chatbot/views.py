@@ -3,7 +3,8 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from django.conf import settings
-from .models import ChatMessage
+from .models import ChatMessage, UploadedFile
+from .serializers import UploadedFileSerializer
 from openai import OpenAI
 import time
 import logging
@@ -12,6 +13,12 @@ from bs4 import BeautifulSoup
 import re
 from django.db import connection
 from django.core.exceptions import ImproperlyConfigured
+import os
+from rest_framework.decorators import api_view
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.decorators import parser_classes
+from rest_framework.permissions import AllowAny
+from rest_framework.decorators import permission_classes
 
 logger = logging.getLogger(__name__)
 
@@ -208,13 +215,50 @@ For completely unrelated topics, politely say: "I specialize in ZRA and tax-rela
                 'response_time': response_time
             })
 
+        # Get any uploaded files for this session
+        file_context = ""
+        image_results = []
+        latest_message = None  # Initialize to make it accessible later
+        
+        try:
+            latest_message = ChatMessage.objects.filter(session_id=session_id).order_by('-timestamp').first()
+            if latest_message:
+                uploaded_files = latest_message.uploaded_files.all()
+                file_contents = []
+                
+                for uploaded_file in uploaded_files:
+                    file_path = os.path.join(settings.MEDIA_ROOT, uploaded_file.file.name)
+                    if os.path.exists(file_path):
+                        if uploaded_file.file_type == 'image':
+                            # Process images with OpenAI's vision API
+                            vision_result = process_image_with_openai(self, file_path, session_id)
+                            image_results.append(f"Image: {uploaded_file.original_filename}\nAnalysis: {vision_result[:1000]}...")  # Limit content to avoid token issues
+                            
+                            # Update the uploaded file with vision analysis
+                            uploaded_file.processed_content = vision_result
+                            uploaded_file.processed = True
+                            uploaded_file.save()
+                        else:
+                            # Extract text content from document files
+                            text_content = extract_text_from_file(file_path, uploaded_file.file_type)
+                            if text_content and len(text_content.strip()) > 0:
+                                file_contents.append(f"File: {uploaded_file.original_filename}\nContent: {text_content[:1000]}...")  # Limit content to avoid token issues
+
+                # Combine all file content
+                all_file_contents = file_contents + image_results
+                if all_file_contents:
+                    file_context = "\n\nAdditional context from uploaded files:\n" + "\n".join(all_file_contents)
+        except Exception as e:
+            logger.error(f"Error processing uploaded files for session {session_id}: {e}")
+            file_context = ""
+
         try:
             # Interact with OpenAI API
             start_time = time.time()
             
             # Create flexible context
             is_greeting_msg = self.is_greeting(message)
-            context_prompt = self.get_flexible_context_prompt(message, is_greeting_msg)
+            context_prompt = self.get_flexible_context_prompt(message, is_greeting_msg) + file_context
             
             response = self.client.chat.completions.create(
                 model="gpt-3.5-turbo",
@@ -251,6 +295,26 @@ For completely unrelated topics, politely say: "I specialize in ZRA and tax-rela
             # Generate dynamic follow-up suggestions based on response content
             follow_up_suggestions = self.generate_follow_up_suggestions(ai_response)
             
+            # Get uploaded files for this message to include in response
+            uploaded_files_data = []
+            try:
+                if 'chat_message' in locals():
+                    uploaded_files = chat_message.uploaded_files.all()
+                    uploaded_files_data = [
+                        {
+                            'id': f.id,
+                            'original_filename': f.original_filename,
+                            'file_type': f.file_type,
+                            'file_size': f.file_size,
+                            'upload_time': f.upload_time.isoformat(),
+                            'processed_content': f.processed_content if hasattr(f, 'processed_content') else '',
+                            'processed': f.processed if hasattr(f, 'processed') else False
+                        }
+                        for f in uploaded_files
+                    ]
+            except Exception as e:
+                logger.warning(f"Could not fetch uploaded files for response: {e}")
+            
             # Return the response
             return Response({
                 'message': message,
@@ -258,7 +322,8 @@ For completely unrelated topics, politely say: "I specialize in ZRA and tax-rela
                 'session_id': session_id,
                 'timestamp': timestamp,
                 'response_time': response_time,
-                'follow_up_suggestions': follow_up_suggestions
+                'follow_up_suggestions': follow_up_suggestions,
+                'uploaded_files': uploaded_files_data
             })
             
         except Exception as e:
@@ -360,3 +425,138 @@ For completely unrelated topics, politely say: "I specialize in ZRA and tax-rela
                 seen_questions.add(suggestion["question"])
         
         return unique_suggestions[:2]
+
+
+@permission_classes([AllowAny])
+class FileUploadView(APIView):
+    parser_classes = (MultiPartParser, FormParser)
+    
+    def post(self, request, *args, **kwargs):
+        # Get session_id from request data
+        session_id = request.data.get('session_id', 'anonymous')
+        
+        # Get the latest chat message for this session to associate the file with
+        try:
+            # Try to get the latest user message in this session
+            latest_message = ChatMessage.objects.filter(
+                session_id=session_id
+            ).order_by('-timestamp').first()
+        except Exception as e:
+            logger.error(f"Could not fetch latest message for session {session_id}: {e}")
+            latest_message = None
+        
+        # If no message exists, we'll create a placeholder
+        if not latest_message:
+            # Create a placeholder message to associate with the file
+            latest_message = ChatMessage.objects.create(
+                session_id=session_id,
+                message="File uploaded",
+                response="File processing...",
+                response_time=0.1
+            )
+        
+        # Process uploaded files
+        uploaded_files = []
+        for file in request.FILES.getlist('files'):
+            # Create UploadedFile instance
+            uploaded_file = UploadedFile.objects.create(
+                chat_message=latest_message,
+                file=file,
+                original_filename=file.name
+            )
+            uploaded_files.append(uploaded_file)
+        
+        # Serialize the uploaded files
+        serializer = UploadedFileSerializer(uploaded_files, many=True)
+        
+        return Response({
+            'message': f'Successfully uploaded {len(uploaded_files)} file(s)',
+            'files': serializer.data,
+            'session_id': session_id
+        }, status=status.HTTP_201_CREATED)
+
+
+def process_image_with_openai(chatbot_view, image_path, session_id):
+    """
+    Process image using OpenAI's vision capabilities
+    """
+    try:
+        import base64
+        from openai import OpenAI
+        
+        # Read and encode the image
+        with open(image_path, "rb") as img_file:
+            base64_image = base64.b64encode(img_file.read()).decode('utf-8')
+        
+        # Create a new OpenAI client for vision processing
+        client = OpenAI(
+            api_key=settings.OPENAI_API_KEY,
+            timeout=15.0  # Slightly longer timeout for vision processing
+        )
+        
+        # Process the image with OpenAI's vision model
+        response = client.chat.completions.create(
+            model="gpt-4o",  # Using current vision-capable model
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Analyze this image and describe any text, numbers, or information visible in it. Focus on details that might be relevant for tax or ZRA-related purposes. If there are documents, forms, receipts, or any financial information, please transcribe and summarize the key details."},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{base64_image}"
+                            }
+                        }
+                    ]
+                }
+            ],
+            max_tokens=500
+        )
+        
+        # Extract the response
+        vision_result = response.choices[0].message.content
+        logger.info(f"Vision API processed image for session {session_id}: {image_path}")
+        return vision_result
+    except Exception as e:
+        logger.error(f"Error processing image with OpenAI Vision for {image_path}: {e}")
+        return f"[Image file uploaded: {os.path.basename(image_path)} - Could not analyze content with vision API]"
+
+
+def extract_text_from_file(file_path, file_type):
+    """
+    Extract text from different file types
+    """
+    import mimetypes
+    mime_type, _ = mimetypes.guess_type(file_path)
+    
+    try:
+        if file_type == 'image' or (mime_type and mime_type.startswith('image/')):
+            # For now, return a placeholder that indicates this is an image
+            # The actual image processing will be handled separately with OpenAI vision
+            return f"[Image file uploaded: {os.path.basename(file_path)} - To be processed with vision API]"
+        elif file_path.lower().endswith('.pdf'):
+            # For PDF files, we can extract text using PyPDF2
+            import PyPDF2
+            with open(file_path, 'rb') as pdf_file:
+                reader = PyPDF2.PdfReader(pdf_file)
+                text = ""
+                for page in reader.pages:
+                    text += page.extract_text() + "\n"
+            return text if text.strip() else f"[PDF file: {os.path.basename(file_path)} - could not extract text]"
+        elif file_path.lower().endswith(('.txt', '.md')):
+            # For text files
+            with open(file_path, 'r', encoding='utf-8') as text_file:
+                return text_file.read()
+        elif file_path.lower().endswith(('.docx', '.doc')):
+            # For Word documents
+            from docx import Document
+            doc = Document(file_path)
+            text = '\n'.join([paragraph.text for paragraph in doc.paragraphs])
+            return text if text.strip() else f"[DOC file: {os.path.basename(file_path)} - could not extract text]"
+        else:
+            # For other file types, return a placeholder
+            return f"[File uploaded: {os.path.basename(file_path)}, type: {file_type}]"
+    except Exception as e:
+        logger.error(f"Error extracting text from {file_path}: {e}")
+        return f"[Error reading file: {os.path.basename(file_path)} - {str(e)}]"
