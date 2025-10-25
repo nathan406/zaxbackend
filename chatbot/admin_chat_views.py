@@ -9,6 +9,7 @@ from rest_framework.parsers import JSONParser
 from django.contrib.auth.models import User
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.conf import settings
 from .models import ActiveChatSession, RealTimeChatMessage
 import json
 import logging
@@ -205,6 +206,7 @@ def get_chat_history(request, session_id):
                     'processed_content': uploaded_file.processed_content if uploaded_file.processed_content else '',
                     'processed': uploaded_file.processed,
                     'file_path': uploaded_file.file.name,  # File path relative to media root
+                    'full_media_url': f"{request.build_absolute_uri('/')[:-1]}{settings.MEDIA_URL}{uploaded_file.file.name}",  # Complete URL to access the file
                     'associated_with_message': chat_msg.message[:50] + "..." if len(chat_msg.message) > 50 else chat_msg.message
                 })
         

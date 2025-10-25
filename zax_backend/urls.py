@@ -18,6 +18,7 @@ from django.contrib import admin
 from django.urls import path, include
 from django.http import JsonResponse
 from django.conf import settings
+from django.conf.urls.static import static
 import os
 
 def api_root(request):
@@ -82,3 +83,7 @@ urlpatterns = [
     path('api/health/', health_check, name='health_check'),  # Health check
     path('api/chatbot/', include('chatbot.urls')),
 ]
+
+# Serve media files during development
+if settings.DEBUG:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
