@@ -34,9 +34,10 @@ def connect_to_user_chat(request):
         
         # Check if the session is already connected to another staff member
         if active_session.status == 'active' and active_session.staff_member:
+            staff_member_name = getattr(active_session.staff_member, 'username', 'Unknown Staff')
             return Response({
                 'error': 'Session is already connected to another staff member',
-                'connected_to': active_session.staff_member.username
+                'connected_to': staff_member_name
             }, status=status.HTTP_400_BAD_REQUEST)
         
         # Update the session to active status with current staff member
@@ -166,7 +167,7 @@ def get_chat_history(request, session_id):
         # Check if this staff member is assigned to this session (for active sessions)
         # For development, we'll skip this check if the user isn't authenticated
         if (active_session.status == 'active' and 
-            active_session.staff_member and 
+            active_session.staff_member is not None and 
             active_session.staff_member != request.user):
             if request.user.is_authenticated:
                 return Response({'error': 'You are not assigned to this chat session'}, status=status.HTTP_403_FORBIDDEN)
@@ -364,11 +365,19 @@ def get_user_chat_status(request, session_id):
                 'is_connected_to_staff': False
             }, status=status.HTTP_200_OK)
         
+        # Safely access staff member information
+        staff_member_name = None
+        if hasattr(active_session, 'staff_member') and active_session.staff_member:
+            try:
+                staff_member_name = active_session.staff_member.username
+            except AttributeError:
+                staff_member_name = None
+        
         return Response({
             'session_id': session_id,
             'status': active_session.status,
             'is_connected_to_staff': active_session.status == 'active',
-            'staff_member': active_session.staff_member.username if active_session.staff_member else None,
+            'staff_member': staff_member_name,
             'is_user_waiting_for_staff': active_session.is_user_waiting_for_staff
         }, status=status.HTTP_200_OK)
     except Exception as e:
