@@ -66,3 +66,55 @@ class UploadedFile(models.Model):
             return self.IMAGE
         else:
             return self.DOCUMENT
+
+
+class ActiveChatSession(models.Model):
+    """
+    Model to track active chat sessions between users and ZRA staff
+    """
+    STATUS_CHOICES = [
+        ('pending', 'Pending - User waiting for staff'),
+        ('active', 'Active - Staff connected'),
+        ('closed', 'Closed - Session ended'),
+    ]
+    
+    session_id = models.CharField(max_length=100, unique=True, help_text="Session ID from the original chat")
+    user_id = models.CharField(max_length=100, help_text="User session ID or user identifier")
+    staff_member = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, 
+                                    help_text="ZRA staff member assigned to this chat")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    created_at = models.DateTimeField(auto_now_add=True)
+    connected_at = models.DateTimeField(null=True, blank=True, help_text="When staff connected")
+    closed_at = models.DateTimeField(null=True, blank=True, help_text="When session was closed")
+    is_user_waiting_for_staff = models.BooleanField(default=False, help_text="Whether user requested staff help")
+    
+    class Meta:
+        ordering = ['-created_at']
+        
+    def __str__(self):
+        return f"Chat session {self.session_id} - {self.status}"
+
+
+class RealTimeChatMessage(models.Model):
+    """
+    Model to store real-time chat messages between users and ZRA staff
+    """
+    MESSAGE_TYPE_CHOICES = [
+        ('user', 'User Message'),
+        ('staff', 'Staff Message'),
+        ('system', 'System Notification'),
+    ]
+    
+    chat_session = models.ForeignKey(ActiveChatSession, on_delete=models.CASCADE, 
+                                    related_name='real_time_messages')
+    sender_type = models.CharField(max_length=10, choices=MESSAGE_TYPE_CHOICES)
+    sender_id = models.CharField(max_length=100, help_text="ID of the sender (session ID for user, user ID for staff)")
+    message = models.TextField(help_text="Message content")
+    timestamp = models.DateTimeField(auto_now_add=True)
+    is_read = models.BooleanField(default=False, help_text="Whether message has been read by the recipient")
+    
+    class Meta:
+        ordering = ['timestamp']
+        
+    def __str__(self):
+        return f"{self.sender_type} message in {self.chat_session.session_id}"

@@ -466,6 +466,25 @@ class FileUploadView(APIView):
             )
             uploaded_files.append(uploaded_file)
         
+        # If user is connected to staff, also create a notification in the active staff chat
+        from .models import ActiveChatSession, RealTimeChatMessage
+        try:
+            active_session = ActiveChatSession.objects.filter(
+                session_id=session_id,
+                status__in=['active', 'pending']
+            ).first()
+            
+            if active_session:
+                # Create a system message about the file upload in the staff chat
+                RealTimeChatMessage.objects.create(
+                    chat_session=active_session,
+                    sender_type='system',  # System message about file upload
+                    sender_id='system',
+                    message=f"User uploaded {len(uploaded_files)} file(s): {', '.join([f.original_filename for f in uploaded_files])}"
+                )
+        except Exception as e:
+            logger.error(f"Error creating staff notification for file upload: {e}")
+        
         # Serialize the uploaded files
         serializer = UploadedFileSerializer(uploaded_files, many=True)
         
