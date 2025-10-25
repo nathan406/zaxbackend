@@ -371,7 +371,6 @@ def get_user_chat_status(request, session_id):
             'staff_member': active_session.staff_member.username if active_session.staff_member else None,
             'is_user_waiting_for_staff': active_session.is_user_waiting_for_staff
         }, status=status.HTTP_200_OK)
-    
     except Exception as e:
         logger.error(f"Error getting user chat status: {e}")
         return Response({'error': 'Internal server error'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
