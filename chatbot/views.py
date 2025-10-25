@@ -35,7 +35,7 @@ class ChatbotAPIView(APIView):
         timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
         status_symbol = "✅" if success else "❌"
         
-        print(f"\n{'='*80}")
+        print(f"\\n{'='*80}")
         print(f"[{timestamp}] CHAT INTERACTION {status_symbol}")
         print(f"Session: {session_id}")
         print(f"Status: {'SUCCESS' if success else 'ERROR'}")
@@ -45,17 +45,17 @@ class ChatbotAPIView(APIView):
         print(f"   {user_message}")
         
         if ai_response:
-            print(f"\n🤖 AI RESPONSE:")
+            print(f"\\n🤖 AI RESPONSE:")
             print(f"   {ai_response[:200]}{'...' if len(ai_response) > 200 else ''}")
         
         if error:
-            print(f"\n❌ ERROR:")
+            print(f"\\n❌ ERROR:")
             print(f"   {error}")
         
         if response_time:
-            print(f"\n⏱️  RESPONSE TIME: {response_time:.2f}s")
+            print(f"\\n⏱️  RESPONSE TIME: {response_time:.2f}s")
         
-        print(f"{'='*80}\n")
+        print(f"{'='*80}\\n")
         
     def is_greeting(self, message):
         """Check if the message is a simple greeting (not a specific help request)"""
@@ -64,9 +64,9 @@ class ChatbotAPIView(APIView):
         # Simple greetings only - no specific requests
         simple_greetings = [
             r'^(hi|hello|hey|greetings)$',
-            r'^(hi|hello|hey|greetings)\s*[.!]*$',
-            r'^good\s+(morning|afternoon|evening)$',
-            r'^(how are you|what\'s up|whats up|sup)$',
+            r'^(hi|hello|hey|greetings)\\s*[.!]*$',
+            r'^good\\s+(morning|afternoon|evening)$',
+            r'^(how are you|what\\'s up|whats up|sup)$',
             r'^(what can you do|what do you do|who are you)$',
             r'^(help|assist|support)$',
             r'^can you help$',
@@ -159,8 +159,8 @@ FLEXIBILITY RULES:
 
 For completely unrelated topics, politely say: "I specialize in ZRA and tax-related matters. While I'd love to chat about other topics, I'm here to help you with tax questions, filing procedures, and ZRA services. Is there anything tax-related I can assist you with?"
 """
-        
-        base_context += f"\nUser Question: {user_message}\n\nProvide a helpful, friendly ZAX response:"
+
+        base_context += f"\\nUser Question: {user_message}\\n\\nProvide a helpful, friendly ZAX response:"
         return base_context
     
     def post(self, request, *args, **kwargs):
@@ -232,7 +232,7 @@ For completely unrelated topics, politely say: "I specialize in ZRA and tax-rela
                         if uploaded_file.file_type == 'image':
                             # Process images with OpenAI's vision API
                             vision_result = process_image_with_openai(self, file_path, session_id)
-                            image_results.append(f"Image: {uploaded_file.original_filename}\nAnalysis: {vision_result[:1000]}...")  # Limit content to avoid token issues
+                            image_results.append(f"Image: {uploaded_file.original_filename}\\nAnalysis: {vision_result[:1000]}...")  # Limit content to avoid token issues
                             
                             # Update the uploaded file with vision analysis
                             uploaded_file.processed_content = vision_result
@@ -242,12 +242,12 @@ For completely unrelated topics, politely say: "I specialize in ZRA and tax-rela
                             # Extract text content from document files
                             text_content = extract_text_from_file(file_path, uploaded_file.file_type)
                             if text_content and len(text_content.strip()) > 0:
-                                file_contents.append(f"File: {uploaded_file.original_filename}\nContent: {text_content[:1000]}...")  # Limit content to avoid token issues
+                                file_contents.append(f"File: {uploaded_file.original_filename}\\nContent: {text_content[:1000]}...")  # Limit content to avoid token issues
 
                 # Combine all file content
                 all_file_contents = file_contents + image_results
                 if all_file_contents:
-                    file_context = "\n\nAdditional context from uploaded files:\n" + "\n".join(all_file_contents)
+                    file_context = "\\n\\nAdditional context from uploaded files:\\n" + "\\n".join(all_file_contents)
         except Exception as e:
             logger.error(f"Error processing uploaded files for session {session_id}: {e}")
             file_context = ""
@@ -258,7 +258,17 @@ For completely unrelated topics, politely say: "I specialize in ZRA and tax-rela
             
             # Create flexible context
             is_greeting_msg = self.is_greeting(message)
-            context_prompt = self.get_flexible_context_prompt(message, is_greeting_msg) + file_context
+            base_context = self.get_flexible_context_prompt(message, is_greeting_msg)
+            
+            # When files are present, the context is about document analysis, not topic redirection
+            if file_context:
+                # Modify the base context to indicate document analysis context
+                base_context = base_context.replace(
+                    "For completely unrelated topics, politely say: \"I specialize in ZRA and tax-related matters. While I'd love to chat about other topics, I'm here to help you with tax questions, filing procedures, and ZRA services. Is there anything tax-related I can assist you with?\"",
+                    "When analyzing user documents, provide insights related to ZRA services and tax matters based on the document content."
+                )
+            
+            context_prompt = base_context + file_context
             
             response = self.client.chat.completions.create(
                 model="gpt-3.5-turbo",
@@ -374,7 +384,7 @@ For completely unrelated topics, politely say: "I specialize in ZRA and tax-rela
         
         # Registration-related suggestions (more specific match)
         if any(term in response_lower for term in ['register', 'registration', 'tpin', 'business']):
-            if not any(term in response_lower for term in ['what is', 'what\'s', 'define', 'meaning of']):
+            if not any(term in response_lower for term in ['what is', 'what\\'s', 'define', 'meaning of']):
                 # More specific to the registration context
                 if 'who' in response_lower or 'individual' in response_lower or 'entity' in response_lower:
                     suggestions.extend([
@@ -390,7 +400,7 @@ For completely unrelated topics, politely say: "I specialize in ZRA and tax-rela
         # Tax-related suggestions (avoid if it's just explaining what something is)
         if any(term in response_lower for term in ['tax', 'vat', 'paye', 'income tax', 'corporate tax']):
             # Don't suggest follow-ups if the response is just explaining what something is
-            if not any(term in response_lower for term in ['what is', 'what\'s', 'define', 'meaning of']):
+            if not any(term in response_lower for term in ['what is', 'what\\'s', 'define', 'meaning of']):
                 if 'vat' in response_lower and 'registration' in response_lower:
                     suggestions.extend([
                         {"question": "How to register for VAT?", "action": "vat-registration"},
@@ -401,7 +411,7 @@ For completely unrelated topics, politely say: "I specialize in ZRA and tax-rela
                         {"question": "Tax payment methods", "action": "payment-methods"},
                         {"question": "Tax filing deadlines", "action": "tax-deadlines"}
                     ])
-        
+        # Continue with rest of the method...
         # Contact/service-related suggestions
         if any(term in response_lower for term in ['contact', 'reach', 'office', 'location', 'call']):
             suggestions.extend([
@@ -541,7 +551,6 @@ def process_image_with_openai(chatbot_view, image_path, session_id):
         logger.error(f"Error processing image with OpenAI Vision for {image_path}: {e}")
         return f"[Image file uploaded: {os.path.basename(image_path)} - Could not analyze content with vision API]"
 
-
 def extract_text_from_file(file_path, file_type):
     """
     Extract text from different file types
@@ -561,7 +570,7 @@ def extract_text_from_file(file_path, file_type):
                 reader = PyPDF2.PdfReader(pdf_file)
                 text = ""
                 for page in reader.pages:
-                    text += page.extract_text() + "\n"
+                    text += page.extract_text() + "\\n"
             return text if text.strip() else f"[PDF file: {os.path.basename(file_path)} - could not extract text]"
         elif file_path.lower().endswith(('.txt', '.md')):
             # For text files
@@ -571,7 +580,7 @@ def extract_text_from_file(file_path, file_type):
             # For Word documents
             from docx import Document
             doc = Document(file_path)
-            text = '\n'.join([paragraph.text for paragraph in doc.paragraphs])
+            text = '\\n'.join([paragraph.text for paragraph in doc.paragraphs])
             return text if text.strip() else f"[DOC file: {os.path.basename(file_path)} - could not extract text]"
         else:
             # For other file types, return a placeholder
