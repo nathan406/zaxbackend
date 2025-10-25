@@ -188,6 +188,12 @@ if ',' in cors_origins_str:
 else:
     CORS_ALLOWED_ORIGINS = [cors_origins_str.strip()]
 
+# Additional production origins for ZRA bot
+CORS_ALLOWED_ORIGINS.extend([
+    'https://zrabot.netlify.app',
+    'https://www.zrabot.netlify.app',
+])
+
 CORS_ALLOW_CREDENTIALS = True
 
 # Additional CORS headers for API requests
@@ -261,6 +267,12 @@ if not DEBUG:
     # Additional CORS settings for production
     CORS_ALLOW_ALL_ORIGINS = False
     CORS_ALLOWED_ORIGIN_REGEXES = [
-        r"^https://.*\.netlify\.app$",
-        r"^https://.*\.onrender\.com$",
+        r"^https://.*\\.netlify\\.app$",
+        r"^https://.*\\.onrender\\.com$",
     ]
+    
+    # Explicitly add the specific domains since regex might not cover all cases
+    CORS_ALLOWED_ORIGINS.extend([
+        'https://zrabot.netlify.app',
+        'https://www.zrabot.netlify.app',
+    ])
