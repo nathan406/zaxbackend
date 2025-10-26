@@ -21,5 +21,7 @@ services:
         value: "zaxbackend.onrender.com,zax-backend.onrender.com,.onrender.com"
       - key: CORS_ALLOWED_ORIGINS
         value: "https://zrabot.netlify.app,http://localhost:5173,http://127.0.0.1:5173"
+      - key: SERVE_MEDIA
+        value: "True"
       - key: RATE_LIMIT_PER_MINUTE
         value: "60"

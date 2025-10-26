@@ -218,6 +218,11 @@ CORS_ALLOW_METHODS = [
     'PUT',
 ]
 
+# Whether to serve media files from Django in production. Disable by default; set
+# to True in the environment (e.g., on Render) only for quick deployments. Long-
+# term use a proper object storage (S3) or Render static service.
+SERVE_MEDIA = config('SERVE_MEDIA', default=False, cast=bool)
+
 # OpenAI Configuration
 OPENAI_API_KEY = config('OPENAI_API_KEY', default='')
 

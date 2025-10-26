@@ -84,6 +84,7 @@ urlpatterns = [
     path('api/chatbot/', include('chatbot.urls')),
 ]
 
-# Serve media files during development
-if settings.DEBUG:
+# Serve media files during development or when explicitly enabled in production.
+# Note: Serving media from Django in production is not recommended long-term.
+if settings.DEBUG or getattr(settings, 'SERVE_MEDIA', False):
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
