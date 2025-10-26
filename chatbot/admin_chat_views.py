@@ -26,9 +26,18 @@ def connect_to_user_chat(request):
     """
     try:
         session_id = request.data.get('session_id')
+        # For admin UI, require explicit admin flag OR an authenticated staff user.
+        admin_flag = request.data.get('admin', False)
+        if not admin_flag and not (request.user and request.user.is_authenticated and request.user.is_staff):
+            return Response({'error': 'Admin access required. Use admin=true from the admin UI or authenticate as staff.'}, status=status.HTTP_403_FORBIDDEN)
         if not session_id:
             return Response({'error': 'Session ID is required'}, status=status.HTTP_400_BAD_REQUEST)
         
+        # Verify admin access (admin UI should send admin=true) unless user is authenticated staff
+        admin_flag = request.data.get('admin', False)
+        if not admin_flag and not (request.user and request.user.is_authenticated and request.user.is_staff):
+            return Response({'error': 'Admin access required to send staff messages.'}, status=status.HTTP_403_FORBIDDEN)
+
         # Get the active chat session
         active_session = get_object_or_404(ActiveChatSession, session_id=session_id)
         
@@ -51,12 +60,30 @@ def connect_to_user_chat(request):
         
         # Send system message that staff has joined
         staff_name = staff_user.username if staff_user else "Staff Member"
-        RealTimeChatMessage.objects.create(
-            chat_session=active_session,
-            sender_type='system',
-            sender_id=str(staff_user.id) if staff_user else "system",
-            message=f"ZRA staff member {staff_name} has joined the chat"
-        )
+        # Avoid creating duplicate "joined" system messages if one was created very recently
+        try:
+            last_sys = RealTimeChatMessage.objects.filter(chat_session=active_session, sender_type='system').order_by('-timestamp').first()
+            create_join_msg = True
+            if last_sys and isinstance(last_sys.message, str) and 'has joined the chat' in last_sys.message:
+                # If the last system 'joined' message was within the last 60 seconds, skip creating another
+                time_delta = timezone.now() - last_sys.timestamp
+                if time_delta.total_seconds() < 60:
+                    create_join_msg = False
+            if create_join_msg:
+                RealTimeChatMessage.objects.create(
+                    chat_session=active_session,
+                    sender_type='system',
+                    sender_id=str(staff_user.id) if staff_user else "system",
+                    message=f"ZRA staff member {staff_name} has joined the chat"
+                )
+        except Exception:
+            # If anything goes wrong, still attempt to create the message once
+            RealTimeChatMessage.objects.create(
+                chat_session=active_session,
+                sender_type='system',
+                sender_id=str(staff_user.id) if staff_user else "system",
+                message=f"ZRA staff member {staff_name} has joined the chat"
+            )
         
         return Response({
             'message': 'Successfully connected to user chat',
@@ -188,41 +215,46 @@ def get_chat_history(request, session_id):
             }
             messages_data.append(message_data)
         
-        # Also get any files associated with this session through regular ChatMessage
-        from .models import ChatMessage, UploadedFile
-        # Get regular chat messages for this session that might have files
-        session_chat_messages = ChatMessage.objects.filter(session_id=session_id).prefetch_related('uploaded_files')
-        
+        # By default we DO NOT include previously uploaded user files in the staff chat
+        # This avoids exposing user files automatically when staff connects and prevents
+        # echo/duplication loops between staff and user chat polling. If the admin UI
+        # explicitly requests files (include_files=true) we will include them.
+        include_files = str(request.query_params.get('include_files', 'false')).lower() == 'true'
+
         files_data = []
-        for chat_msg in session_chat_messages:
-            uploaded_files = chat_msg.uploaded_files.all()
-            for uploaded_file in uploaded_files:
-                # Safely build the full media URL to prevent server crashes
-                try:
-                    base_url = request.build_absolute_uri('/')[:-1] if request.build_absolute_uri('/')[:-1] else settings.ALLOWED_HOSTS[0] if settings.ALLOWED_HOSTS else 'http://localhost:8000'
-                    full_media_url = f"{base_url}{settings.MEDIA_URL}{uploaded_file.file.name}"
-                except:
-                    # Fallback to a default URL format if there are issues
-                    full_media_url = f"{settings.ALLOWED_HOSTS[0] if settings.ALLOWED_HOSTS else 'http://localhost:8000'}{settings.MEDIA_URL}{uploaded_file.file.name}"
-                
-                # Provide file URL for staff access (relative to media root)
-                files_data.append({
-                    'id': uploaded_file.id,
-                    'original_filename': uploaded_file.original_filename,
-                    'file_type': uploaded_file.file_type,
-                    'file_size': uploaded_file.file_size,
-                    'upload_time': uploaded_file.upload_time.isoformat(),
-                    'processed_content': uploaded_file.processed_content if uploaded_file.processed_content else '',
-                    'processed': uploaded_file.processed,
-                    'file_path': uploaded_file.file.name,  # File path relative to media root
-                    'full_media_url': full_media_url,  # Complete URL to access the file
-                    'associated_with_message': chat_msg.message[:50] + "..." if len(chat_msg.message) > 50 else chat_msg.message
-                })
-        
+        if include_files:
+            from .models import ChatMessage, UploadedFile
+            # Get regular chat messages for this session that might have files
+            session_chat_messages = ChatMessage.objects.filter(session_id=session_id).prefetch_related('uploaded_files')
+            for chat_msg in session_chat_messages:
+                uploaded_files = chat_msg.uploaded_files.all()
+                for uploaded_file in uploaded_files:
+                    # Safely build the full media URL to prevent server crashes
+                    try:
+                        base_url = request.build_absolute_uri('/')[:-1] if request.build_absolute_uri('/')[:-1] else settings.ALLOWED_HOSTS[0] if settings.ALLOWED_HOSTS else 'http://localhost:8000'
+                        full_media_url = f"{base_url}{settings.MEDIA_URL}{uploaded_file.file.name}"
+                    except Exception:
+                        # Fallback to a default URL format if there are issues
+                        full_media_url = f"{settings.ALLOWED_HOSTS[0] if settings.ALLOWED_HOSTS else 'http://localhost:8000'}{settings.MEDIA_URL}{uploaded_file.file.name}"
+
+                    # Provide file URL for staff access (relative to media root)
+                    files_data.append({
+                        'id': uploaded_file.id,
+                        'original_filename': uploaded_file.original_filename,
+                        'file_type': uploaded_file.file_type,
+                        'file_size': uploaded_file.file_size,
+                        'upload_time': uploaded_file.upload_time.isoformat(),
+                        'processed_content': uploaded_file.processed_content if uploaded_file.processed_content else '',
+                        'processed': uploaded_file.processed,
+                        'file_path': uploaded_file.file.name,  # File path relative to media root
+                        'full_media_url': full_media_url,  # Complete URL to access the file
+                        'associated_with_message': chat_msg.message[:50] + "..." if len(chat_msg.message) > 50 else chat_msg.message
+                    })
+
         return Response({
             'session_id': session_id,
             'messages': messages_data,
-            'files': files_data  # Include files associated with the session
+            'files': files_data  # Only populated when include_files=true
         }, status=status.HTTP_200_OK)
     
     except Exception as e:
