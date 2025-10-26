@@ -66,7 +66,7 @@ class ChatbotAPIView(APIView):
             r'^(hi|hello|hey|greetings)$',
             r'^(hi|hello|hey|greetings)\\s*[.!]*$',
             r'^good\\s+(morning|afternoon|evening)$',
-            r'^(how are you|what\\'s up|whats up|sup)$',
+            r"^(how are you|what\\'s up|whats up|sup)$",
             r'^(what can you do|what do you do|who are you)$',
             r'^(help|assist|support)$',
             r'^can you help$',
@@ -92,7 +92,25 @@ class ChatbotAPIView(APIView):
             'registration', 'tpin', 'withholding', 'penalty', 'compliance',
             'revenue', 'taxation', 'levy', 'assessment', 'audit', 'refund',
             'business', 'company', 'individual', 'taxpayer', 'declaration',
-            'payment', 'deadline', 'form', 'certificate', 'license'
+            'payment', 'deadline', 'form', 'certificate', 'license',
+            'zambia', 'tpin', 'itr', 'tin', 'turnover tax', 'presumptive tax',
+            'withholding tax', 'pay as you earn', 'value added tax',
+            'paye', 'pay as you earn', 'employment tax', 'salary tax',
+            'corporate income tax', 'cit', 'business tax', 'trade license',
+            'import duty', 'export duty', 'customs clearance',
+            'tax clearance', 'compliance certificate', 'tax certificate',
+            'vat registration', 'tpin application', 'tax audit',
+            'tax investigation', 'tax dispute', 'appeal', 'objection',
+            'tax refund', 'restitution', 'tax credit', 'deduction',
+            'tax return', 'itr', 'income tax return', 'annual return',
+            'monthly return', 'quarterly return', 'vat return',
+            'paye return', 'withholding tax return', 'fringe benefits',
+            'benefit in kind', 'perquisite', 'allowance', 'bonus',
+            'commission', 'overtime', 'severance', 'gratuity',
+            'capital gains', 'property tax', 'rental income',
+            'investment income', 'dividend', 'interest', 'royalty',
+            'licensing', 'permit', 'authorization', 'exemption',
+            'relief', 'rebate', 'discount', 'adjustment', 'amendment'
         ]
         
         message_lower = message.lower()
@@ -168,9 +186,14 @@ For completely unrelated topics, politely say: "I specialize in ZRA and tax-rela
         message = request.data.get('message')
         session_id = request.data.get('session_id', 'anonymous')
 
-        if not message:
+        # Check if there's a message or uploaded files
+        if not message and not file_context:
             self.log_to_terminal(session_id, "", False, error="Message content is required")
             return Response({'error': 'Message content is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # If there's no message but there are files, create a default message
+        if not message and file_context:
+            message = "Please analyze the uploaded documents."
 
         # Check if it's a greeting and handle it specially
         # Only show full greeting for new/first-time sessions
@@ -228,29 +251,97 @@ For completely unrelated topics, politely say: "I specialize in ZRA and tax-rela
                 
                 for uploaded_file in uploaded_files:
                     file_path = os.path.join(settings.MEDIA_ROOT, uploaded_file.file.name)
+                    logger.info(f"Processing file {uploaded_file.original_filename} of type {uploaded_file.file_type} for session {session_id}")
+                    # Log the actual file extension to help with debugging
+                    import mimetypes
+                    mime_type, _ = mimetypes.guess_type(file_path)
+                    logger.info(f"File MIME type for {uploaded_file.original_filename}: {mime_type}")
                     if os.path.exists(file_path):
+                        # Log file size for debugging
+                        file_size = os.path.getsize(file_path)
+                        logger.info(f"File {uploaded_file.original_filename} size: {file_size} bytes")
+                        if file_size == 0:
+                            logger.warning(f"File {uploaded_file.original_filename} is empty")
+                            if uploaded_file.file_type == 'image':
+                                image_results.append(f"Image: {uploaded_file.original_filename}\\nError: File is empty (0 bytes)")
+                            else:
+                                file_contents.append(f"File: {uploaded_file.original_filename}\\nContent: [File is empty]")
+                            continue
                         if uploaded_file.file_type == 'image':
                             # Process images with OpenAI's vision API
-                            vision_result = process_image_with_openai(self, file_path, session_id)
-                            image_results.append(f"Image: {uploaded_file.original_filename}\\nAnalysis: {vision_result[:1000]}...")  # Limit content to avoid token issues
-                            
-                            # Update the uploaded file with vision analysis
-                            uploaded_file.processed_content = vision_result
-                            uploaded_file.processed = True
-                            uploaded_file.save()
+                            logger.info(f"Sending image {uploaded_file.original_filename} to OpenAI Vision API")
+                            try:
+                                vision_result = process_image_with_openai(self, file_path, session_id)
+                                logger.info(f"Received vision result for {uploaded_file.original_filename}: {len(vision_result) if vision_result else 0} characters")
+                                # Log a preview of the vision result for debugging
+                                if vision_result:
+                                    logger.debug(f"Vision result preview for {uploaded_file.original_filename}: {vision_result[:200]}...")
+                                    # Check if the vision result contains meaningful content
+                                    if len(vision_result.strip()) > 50 and not vision_result.startswith("[Image file uploaded"):
+                                        image_results.append(f"Image: {uploaded_file.original_filename}\\nAnalysis: {vision_result[:1000]}...")  # Limit content to avoid token issues
+                                    else:
+                                        logger.info(f"Vision result for {uploaded_file.original_filename} appears to be an error or empty")
+                                        image_results.append(f"Image: {uploaded_file.original_filename}\\nAnalysis: [Could not extract meaningful content from image]")
+                                else:
+                                    logger.warning(f"No vision result returned for {uploaded_file.original_filename}")
+                                    image_results.append(f"Image: {uploaded_file.original_filename}\\nAnalysis: [No content could be extracted from image]")
+                                
+                                # Update the uploaded file with vision analysis
+                                uploaded_file.processed_content = vision_result
+                                uploaded_file.processed = True
+                                uploaded_file.save()
+                            except Exception as process_error:
+                                logger.error(f"Error processing image {uploaded_file.original_filename}: {process_error}")
+                                image_results.append(f"Image: {uploaded_file.original_filename}\\nError: Failed to process image with vision API")
                         else:
                             # Extract text content from document files
-                            text_content = extract_text_from_file(file_path, uploaded_file.file_type)
-                            if text_content and len(text_content.strip()) > 0:
-                                file_contents.append(f"File: {uploaded_file.original_filename}\\nContent: {text_content[:1000]}...")  # Limit content to avoid token issues
+                            logger.info(f"Extracting text from document {uploaded_file.original_filename}")
+                            try:
+                                text_content = extract_text_from_file(file_path, uploaded_file.file_type)
+                                if text_content and len(text_content.strip()) > 0:
+                                    logger.info(f"Extracted text from {uploaded_file.original_filename}: {len(text_content)} characters")
+                                    # Log a preview of the extracted text for debugging
+                                    logger.debug(f"Text content preview for {uploaded_file.original_filename}: {text_content[:200]}...")
+                                    file_contents.append(f"File: {uploaded_file.original_filename}\\nContent: {text_content[:1000]}...")  # Limit content to avoid token issues
+                                else:
+                                    logger.info(f"No text content extracted from {uploaded_file.original_filename}")
+                                    file_contents.append(f"File: {uploaded_file.original_filename}\\nContent: [No text content could be extracted]")
+                            except Exception as extract_error:
+                                logger.error(f"Error extracting text from {uploaded_file.original_filename}: {extract_error}")
+                                file_contents.append(f"File: {uploaded_file.original_filename}\\nContent: [Error extracting text from file]")
+                    else:
+                        logger.warning(f"File not found: {file_path}")
+                        if uploaded_file.file_type == 'image':
+                            image_results.append(f"Image: {uploaded_file.original_filename}\\nError: File not found at {file_path}")
+                        else:
+                            file_contents.append(f"File: {uploaded_file.original_filename}\\nContent: [File not found at {file_path}]")
 
                 # Combine all file content
                 all_file_contents = file_contents + image_results
+                logger.info(f"Combining file contents for session {session_id}: {len(file_contents)} text files, {len(image_results)} images, total {len(all_file_contents)} items")
+                # Log sample of what we're combining
+                if file_contents:
+                    logger.debug(f"Sample text file contents: {file_contents[0][:200] if file_contents else 'None'}...")
+                if image_results:
+                    logger.debug(f"Sample image results: {image_results[0][:200] if image_results else 'None'}...")
                 if all_file_contents:
-                    file_context = "\\n\\nAdditional context from uploaded files:\\n" + "\\n".join(all_file_contents)
+                    file_context = "\\n\\nAdditional context from uploaded files (analyze these documents for ZRA-related content):\\n" + "\\n".join(all_file_contents)
+                    logger.info(f"Built file context for session {session_id}: {len(all_file_contents)} files processed")
+                    logger.debug(f"File context content preview: {file_context[:500]}...")
+                else:
+                    logger.info(f"No file content extracted for session {session_id}")
+                    # Even if no content was extracted, we should still indicate that files were uploaded
+                    if uploaded_files:
+                        file_names = [f.original_filename for f in uploaded_files]
+                        file_context = f"\\n\\nUser uploaded {len(uploaded_files)} file(s): {', '.join(file_names)}. Please analyze these files for ZRA-related content."
+                        logger.info(f"Created placeholder file context for {len(uploaded_files)} files")
         except Exception as e:
             logger.error(f"Error processing uploaded files for session {session_id}: {e}")
             file_context = ""
+            
+        # If files are present but no message was provided, create a default analysis prompt
+        if file_context and not message:
+            message = "Please analyze the uploaded documents and provide insights related to ZRA and tax matters."
 
         try:
             # Interact with OpenAI API
@@ -260,20 +351,39 @@ For completely unrelated topics, politely say: "I specialize in ZRA and tax-rela
             is_greeting_msg = self.is_greeting(message)
             base_context = self.get_flexible_context_prompt(message, is_greeting_msg)
             
-            # When files are present, the context is about document analysis, not topic redirection
+            # Log the base context for debugging
+            logger.debug(f"Base context for session {session_id}: {len(base_context)} characters")
+            
+            # When files are present, the context is about document analysis
             if file_context:
                 # Modify the base context to indicate document analysis context
+                # Tell the AI to treat the document content as the primary focus, regardless of initial message topic
                 base_context = base_context.replace(
                     "For completely unrelated topics, politely say: \"I specialize in ZRA and tax-related matters. While I'd love to chat about other topics, I'm here to help you with tax questions, filing procedures, and ZRA services. Is there anything tax-related I can assist you with?\"",
-                    "When analyzing user documents, provide insights related to ZRA services and tax matters based on the document content."
+                    "When analyzing user documents, provide insights related to ZRA services and tax matters based on the document content. Treat the document content as the primary context for your response, regardless of the user's initial message. If the document contains ZRA-related information, analyze and explain it. If it contains questions or requests, address those specifically. Always analyze uploaded documents for ZRA-related content, even if the initial user message seems unrelated."
                 )
+                logger.info(f"Modified base context for file analysis in session {session_id}")
             
             context_prompt = base_context + file_context
+            
+            # Log the context being sent to AI for debugging
+            logger.debug(f"Context prompt for session {session_id}: {len(context_prompt)} characters")
+            if len(context_prompt) > 500:
+                logger.debug(f"Context prompt preview: {context_prompt[:500]}...")
+            else:
+                logger.debug(f"Full context prompt: {context_prompt}")
+            
+            # If files are present, make sure the AI knows to focus on document analysis
+            # Also, if the user didn't provide a message but uploaded files, treat the files as the main query
+            if file_context and (not message or message.strip() == ""):
+                context_prompt += "\\n\\nIMPORTANT: The user has uploaded documents without a specific message. Your primary task is to ANALYZE THE CONTENT OF THESE DOCUMENTS and provide a detailed response about what you find. Focus on the document content, not the user's initial message. If the documents contain ZRA-related information, explain that information in detail. If they contain questions or requests, answer those specifically. If the documents do NOT contain ZRA-related content, respond with: 'I specialize in ZRA and tax-related matters. While I'd love to help with other topics, I can only assist with tax questions, filing procedures, and ZRA services. Please upload ZRA-related documents or ask tax-related questions.' Provide a comprehensive analysis of the document content. DO NOT IGNORE THE DOCUMENTS!"
+            elif file_context:
+                context_prompt += "\\n\\nIMPORTANT: The user has uploaded documents. Your primary task is to ANALYZE THE CONTENT OF THESE DOCUMENTS and provide a detailed response about what you find. Focus on the document content, not the user's initial message. If the documents contain ZRA-related information, explain that information in detail. If they contain questions or requests, answer those specifically. If the documents do NOT contain ZRA-related content, respond with: 'I specialize in ZRA and tax-related matters. While I'd love to help with other topics, I can only assist with tax questions, filing procedures, and ZRA services. Please upload ZRA-related documents or ask tax-related questions.' Provide a comprehensive analysis of the document content. DO NOT IGNORE THE DOCUMENTS!"
             
             response = self.client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
-                    {"role": "system", "content": "You are ZAX, a helpful AI assistant for the Zambia Revenue Authority (ZRA). Be concise, professional, and informative. Keep responses under 150 words. Do not use generic phrases like 'Next Steps:' unless you actually provide specific next steps. Make sure any suggested follow-up actions are genuinely relevant to the user's query. Avoid repeating greeting phrases like 'Hello!' in your responses if the conversation is already ongoing. Never use 'their' instead say 'our' when referring to ZRA services."},
+                    {"role": "system", "content": "You are ZAX, a helpful AI assistant for the Zambia Revenue Authority (ZRA). Be concise, professional, and informative. Keep responses under 150 words. Do not use generic phrases like 'Next Steps:' unless you actually provide specific next steps. Make sure any suggested follow-up actions are genuinely relevant to the user's query. Avoid repeating greeting phrases like 'Hello!' in your responses if the conversation is already ongoing. Never use 'their' instead say 'our' when referring to ZRA services. When analyzing user-uploaded documents, focus on the document content as the primary context and provide insights based on what you see in the document, regardless of the initial user message. Always analyze uploaded documents for ZRA-related content and respond appropriately, even if the initial user message seems unrelated. Uploaded documents should be treated as the main context for your response. If the documents do not contain ZRA-related content, politely inform the user that you specialize in ZRA and tax-related matters and can only assist with tax questions, filing procedures, and ZRA services. If the documents contain ZRA-related information, provide detailed insights and explanations about that information. If the documents contain questions or requests, address those specifically. Provide a comprehensive analysis of the document content."},
                     {"role": "user", "content": context_prompt}
                 ],
                 max_tokens=200,  # Reduced for faster responses
@@ -384,7 +494,7 @@ For completely unrelated topics, politely say: "I specialize in ZRA and tax-rela
         
         # Registration-related suggestions (more specific match)
         if any(term in response_lower for term in ['register', 'registration', 'tpin', 'business']):
-            if not any(term in response_lower for term in ['what is', 'what\\'s', 'define', 'meaning of']):
+            if not any(term in response_lower for term in ["what is", "what's", 'define', 'meaning of']):
                 # More specific to the registration context
                 if 'who' in response_lower or 'individual' in response_lower or 'entity' in response_lower:
                     suggestions.extend([
@@ -400,7 +510,7 @@ For completely unrelated topics, politely say: "I specialize in ZRA and tax-rela
         # Tax-related suggestions (avoid if it's just explaining what something is)
         if any(term in response_lower for term in ['tax', 'vat', 'paye', 'income tax', 'corporate tax']):
             # Don't suggest follow-ups if the response is just explaining what something is
-            if not any(term in response_lower for term in ['what is', 'what\\'s', 'define', 'meaning of']):
+            if not any(term in response_lower for term in ["what is", "what's", 'define', 'meaning of']):
                 if 'vat' in response_lower and 'registration' in response_lower:
                     suggestions.extend([
                         {"question": "How to register for VAT?", "action": "vat-registration"},

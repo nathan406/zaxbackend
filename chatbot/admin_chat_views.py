@@ -197,6 +197,14 @@ def get_chat_history(request, session_id):
         for chat_msg in session_chat_messages:
             uploaded_files = chat_msg.uploaded_files.all()
             for uploaded_file in uploaded_files:
+                # Safely build the full media URL to prevent server crashes
+                try:
+                    base_url = request.build_absolute_uri('/')[:-1] if request.build_absolute_uri('/')[:-1] else settings.ALLOWED_HOSTS[0] if settings.ALLOWED_HOSTS else 'http://localhost:8000'
+                    full_media_url = f"{base_url}{settings.MEDIA_URL}{uploaded_file.file.name}"
+                except:
+                    # Fallback to a default URL format if there are issues
+                    full_media_url = f"{settings.ALLOWED_HOSTS[0] if settings.ALLOWED_HOSTS else 'http://localhost:8000'}{settings.MEDIA_URL}{uploaded_file.file.name}"
+                
                 # Provide file URL for staff access (relative to media root)
                 files_data.append({
                     'id': uploaded_file.id,
@@ -207,7 +215,7 @@ def get_chat_history(request, session_id):
                     'processed_content': uploaded_file.processed_content if uploaded_file.processed_content else '',
                     'processed': uploaded_file.processed,
                     'file_path': uploaded_file.file.name,  # File path relative to media root
-                    'full_media_url': f"{request.build_absolute_uri('/')[:-1]}{settings.MEDIA_URL}{uploaded_file.file.name}",  # Complete URL to access the file
+                    'full_media_url': full_media_url,  # Complete URL to access the file
                     'associated_with_message': chat_msg.message[:50] + "..." if len(chat_msg.message) > 50 else chat_msg.message
                 })
         
